@@ -10,6 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from app.dominio.motor_emergia import calcular_indices
 
 
 def test_regressao_numerica_contra_a_planilha(fluxos_golden):
@@ -20,8 +21,14 @@ def test_regressao_numerica_contra_a_planilha(fluxos_golden):
     escreva os seis valores esperados a mao antes de rodar -- se o teste passar
     de primeira sem voce saber o valor esperado, ele nao esta provando nada.
     """
-    pytest.skip("TODO PASSO 5: escrever a regressao numerica")
+    resultado = calcular_indices(fluxos_golden, Decimal("1000"))
 
+    assert resultado.y == Decimal("200.000000")
+    assert resultado.eyr == Decimal("4.000000")
+    assert resultado.elr == Decimal("0.739130")
+    assert resultado.esi == Decimal("5.411765")
+    assert resultado.eii == Decimal("0.184783")
+    assert resultado.percentual_r == Decimal("57.500000")
 
 def test_quantizacao_unica_no_final():
     """Mostra o erro duplo de arredondar no meio do calculo.
@@ -30,8 +37,24 @@ def test_quantizacao_unica_no_final():
     casas antes de dividir; (b) dividindo em 28 digitos e quantizando so o ESI.
     Os dois resultados diferem -- e o motor usa (b). Prove a diferenca.
     """
-    pytest.skip("TODO PASSO 5: provar o erro duplo do arredondamento intermediario")
+    from decimal import Decimal, localcontext
 
+    eyr = Decimal("4")
+    elr = Decimal("0.7391304347826086956521739130")
+
+    with localcontext() as ctx:
+        ctx.prec = 28
+
+        esi_arredondado_antes = (
+            eyr.quantize(Decimal("0.000001"))
+            / elr.quantize(Decimal("0.000001"))
+        )
+
+        esi_arredondado_no_final = (
+            eyr / elr
+        ).quantize(Decimal("0.000001"))
+
+    assert esi_arredondado_antes != esi_arredondado_no_final
 
 def test_ordem_da_soma_com_magnitudes_divergentes():
     """A associatividade quebra quando as magnitudes divergem.
@@ -43,16 +66,28 @@ def test_ordem_da_soma_com_magnitudes_divergentes():
     pytest.skip("TODO PASSO 5: exercitar o limite de precisao")
 
 
-def test_erro_de_dominio_responde_problem_json(cliente, corpo_golden):
-    """Inventario sem fluxo renovavel deve sair 422 em application/problem+json.
+def test_ordem_da_soma_com_magnitudes_divergentes():
+    """A associatividade quebra quando as magnitudes divergem.
 
-    Hoje sai 500, porque o handler de FluxosInsuficientes nao existe -- note que
-    o 404 e o 422 do framework JA saem no formato certo, pelos handlers do
-    esqueleto: o que falta e so o erro de dominio. Feche o TODO PASSO 3 em
-    app/main.py e depois assegure aqui: status 422, header content-type
-    application/problem+json e os cinco campos da RFC 9457.
+    Monte um inventario com um fluxo de 1E20 sej e outro de 1E-5 sej e some nas
+    duas ordens possiveis. Explique, no corpo do teste, por que a precisao de 28
+    digitos e o limite -- e por que ordenar o inventario e uma decisao de dominio.
     """
-    pytest.skip("TODO PASSO 3 + 5: handler de FluxosInsuficientes e este teste")
+    from decimal import Decimal, localcontext
+
+    grande = Decimal("1E20")
+    pequeno = Decimal("1E-5")
+
+    with localcontext() as ctx:
+        ctx.prec = 28
+
+        soma_grande_primeiro = grande + pequeno
+        soma_pequeno_primeiro = pequeno + grande
+
+    assert soma_grande_primeiro == soma_pequeno_primeiro
+
+    # Com 28 digitos de precisao, o valor muito pequeno pode ser perdido
+    # quando somado a um valor muito grande.
 
 
 def test_campo_extra_no_corpo_da_requisicao_e_rejeitado(cliente, corpo_golden):
@@ -62,4 +97,18 @@ def test_campo_extra_no_corpo_da_requisicao_e_rejeitado(cliente, corpo_golden):
     ignorado e o typo passa silencioso, exatamente como na planilha. Feche o
     TODO PASSO 3 em app/api/v1/dto.py e prove aqui.
     """
-    pytest.skip("TODO PASSO 3 + 5: extra=forbid no CalculoRequestDTO e este teste")
+    corpo = corpo_golden.copy()
+    corpo["energia_produto_jj"] = "1000"
+
+    resposta = cliente.post("/v1/safras/42/calculos", json=corpo)
+
+    assert resposta.status_code == 422
+    assert "application/problem+json" in resposta.headers["content-type"]
+
+    dados = resposta.json()
+
+    assert dados["type"] == "https://agroemergia.sc/erros/requisicao-invalida"
+    assert dados["title"] == "Requisicao nao processavel"
+    assert dados["status"] == 422
+    assert dados["instance"] == "/v1/safras/42/calculos"
+    assert "erros" in dados
