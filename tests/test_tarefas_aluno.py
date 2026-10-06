@@ -63,16 +63,6 @@ def test_ordem_da_soma_com_magnitudes_divergentes():
     duas ordens possiveis. Explique, no corpo do teste, por que a precisao de 28
     digitos e o limite -- e por que ordenar o inventario e uma decisao de dominio.
     """
-    pytest.skip("TODO PASSO 5: exercitar o limite de precisao")
-
-
-def test_ordem_da_soma_com_magnitudes_divergentes():
-    """A associatividade quebra quando as magnitudes divergem.
-
-    Monte um inventario com um fluxo de 1E20 sej e outro de 1E-5 sej e some nas
-    duas ordens possiveis. Explique, no corpo do teste, por que a precisao de 28
-    digitos e o limite -- e por que ordenar o inventario e uma decisao de dominio.
-    """
     from decimal import Decimal, localcontext
 
     grande = Decimal("1E20")
@@ -89,6 +79,36 @@ def test_ordem_da_soma_com_magnitudes_divergentes():
     # Com 28 digitos de precisao, o valor muito pequeno pode ser perdido
     # quando somado a um valor muito grande.
 
+def test_erro_de_dominio_responde_problem_json(cliente, corpo_golden):
+    """Inventario sem fluxo renovavel deve responder 422 em problem+json."""
+
+    corpo = corpo_golden.copy()
+
+    corpo["fluxos"] = [
+        {
+            "recurso": "solo",
+            "categoria": "N",
+            "emergia_sej": "50"
+        },
+        {
+            "recurso": "diesel",
+            "categoria": "MN",
+            "emergia_sej": "20"
+        }
+    ]
+
+    resposta = cliente.post("/v1/safras/44/calculos", json=corpo)
+
+    assert resposta.status_code == 422
+    assert "application/problem+json" in resposta.headers["content-type"]
+
+    dados = resposta.json()
+
+    assert dados["type"] == "https://agroemergia.sc/erros/fluxos-insuficientes"
+    assert dados["title"] == "Fluxos insuficientes"
+    assert dados["status"] == 422
+    assert dados["instance"] == "/v1/safras/44/calculos"
+    assert "detail" in dados
 
 def test_campo_extra_no_corpo_da_requisicao_e_rejeitado(cliente, corpo_golden):
     """"energia_produto_jj" tem de morrer com 422, nao virar calculo incompleto.
